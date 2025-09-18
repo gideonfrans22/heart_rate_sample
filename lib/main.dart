@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:hear_rate_sample_collector/pages/collect_page.dart';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
 import 'services/mqtt_service.dart';
@@ -47,10 +48,7 @@ class _MainScreenState extends State<MainScreen> {
     return Scaffold(
       body: IndexedStack(
         index: _selectedIndex,
-        children: const [
-          HomePage(),
-          Center(child: Text('Collect Page - Coming Soon')),
-        ],
+        children: const [HomePage(), CollectPage()],
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
