@@ -1,0 +1,24 @@
+name: hear_rate_sample_collector
+description: "A new Flutter project."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.8.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  firebase_core: ^4.1.0
+  cloud_firestore: ^6.0.1
+  mqtt_client: ^10.6.0
+  fl_chart: ^0.68.0
+  intl: ^0.20.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
