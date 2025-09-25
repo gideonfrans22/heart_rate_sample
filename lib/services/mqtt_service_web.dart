@@ -48,7 +48,7 @@ class MqttServiceWeb implements MqttServiceBase {
     }
 
     // Create new client with unique ID and explicit WebSocket URL
-    final wsUrl = 'ws://139.59.251.61:15675/ws';
+    final wsUrl = 'wss://ws.kasihkaruniakekalpt.com';
     final clientId = 'flutter_web_${DateTime.now().millisecondsSinceEpoch}';
 
     print('🌐 Creating MqttBrowserClient with URL: $wsUrl');
@@ -61,7 +61,7 @@ class MqttServiceWeb implements MqttServiceBase {
     _client!.autoReconnect = true;
     _client!.resubscribeOnAutoReconnect = true;
     _client!.websocketProtocols = ['mqtt'];
-    _client!.port = 15675;
+    _client!.port = 443;
 
     // Set up event handlers
     _client!.onConnected = _onConnected;
@@ -78,7 +78,7 @@ class MqttServiceWeb implements MqttServiceBase {
 
     try {
       print('🌐 Connecting to MQTT broker via WebSocket...');
-      print('🌐 Connection URL: ws://139.59.251.61:15675/ws');
+      print('🌐 Connection URL: wss://ws.kasihkaruniakekalpt.com');
 
       // Connect with credentials
       final connMessage = MqttConnectMessage()
