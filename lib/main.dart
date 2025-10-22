@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:hear_rate_sample_collector/pages/collect_page.dart';
-import 'package:mqtt_client/mqtt_client.dart';
-import 'package:mqtt_client/mqtt_server_client.dart';
+import 'package:hear_rate_sample_collector/pages/predict_page.dart';
 import 'services/mqtt_service.dart';
-import 'services/firebase_service.dart';
+import 'services/ml_service.dart';
 import 'firebase_options.dart';
 import 'pages/home_page.dart';
 
@@ -16,6 +15,9 @@ void main() async {
 
   // Initialize MQTT service
   await MqttService.instance.initialize();
+
+  // Initialize ML service
+  // await MLService.instance.initialize();
 
   runApp(const MainApp());
 }
@@ -48,14 +50,21 @@ class _MainScreenState extends State<MainScreen> {
     return Scaffold(
       body: IndexedStack(
         index: _selectedIndex,
-        children: const [HomePage(), CollectPage()],
+        children: const [HomePage(), CollectPage(), PredictPage()],
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
         onTap: (index) => setState(() => _selectedIndex = index),
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
-          BottomNavigationBarItem(icon: Icon(Icons.circle), label: 'Collect'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.fiber_manual_record),
+            label: 'Collect',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.psychology),
+            label: 'Predict',
+          ),
         ],
       ),
     );
