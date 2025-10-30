@@ -1,0 +1,3 @@
+[submodule "model"]
+	path = ai_model
+	url = https://github.com/gideonfrans22/haksulje_emotion_classification.git
