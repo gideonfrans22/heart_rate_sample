@@ -400,6 +400,9 @@ class PredictionHistoryCard extends StatelessWidget {
                   final features =
                       item['heartRateFeatures'] as Map<String, dynamic>;
                   final timestamp = item['createdAt'] as Timestamp?;
+                  final className = prediction['class_name'] as String;
+                  final probAngry = prediction['prob_angry'] as double;
+                  final probSad = prediction['prob_sad'] as double;
 
                   return ListTile(
                     leading: Text(
@@ -407,7 +410,11 @@ class PredictionHistoryCard extends StatelessWidget {
                       style: const TextStyle(fontSize: 30),
                     ),
                     title: Text(
-                      '${prediction['class_name'] ?? 'Unknown'} (${((prediction['prob_angry'] ?? 0) * 100).toStringAsFixed(0)}%)',
+                      '${className ?? 'Unknown'} (${((className == "sad"
+                              ? probSad
+                              : className == "angry"
+                              ? probAngry
+                              : 0) * 100).toStringAsFixed(0)}%)',
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                     subtitle: Column(
