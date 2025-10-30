@@ -410,11 +410,7 @@ class PredictionHistoryCard extends StatelessWidget {
                       style: const TextStyle(fontSize: 30),
                     ),
                     title: Text(
-                      '${className ?? 'Unknown'} (${((className == "sad"
-                              ? probSad
-                              : className == "angry"
-                              ? probAngry
-                              : 0) * 100).toStringAsFixed(0)}%)',
+                      '${className ?? 'Unknown'} (${((className == "sad" ? probSad : probAngry ?? 0) * 100).toStringAsFixed(0)}%)',
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                     subtitle: Column(
