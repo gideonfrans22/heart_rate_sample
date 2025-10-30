@@ -52,17 +52,15 @@ class _PredictPageState extends State<PredictPage> {
   void _setupHeartRateListener() {
     MqttService.instance.heartRateStream.listen((heartRate) {
       if (mounted) {
+        // Check recording state before setState to ensure we capture it
+        final bool isCurrentlyRecording = _isRecording;
+
         setState(() {
           _currentHeartRate = heartRate;
 
           // Add to chart data
           _heartRateData.add(FlSpot(_dataPointCounter.toDouble(), heartRate));
           _dataPointCounter++;
-
-          // If recording, add to raw data
-          if (_isRecording) {
-            _rawHeartRateData.add(heartRate);
-          }
 
           // Keep only last 50 data points for chart
           if (_heartRateData.length > 50) {
@@ -73,6 +71,11 @@ class _PredictPageState extends State<PredictPage> {
             _dataPointCounter = _heartRateData.length;
           }
         });
+
+        // Add to raw data outside setState to avoid any timing issues
+        if (isCurrentlyRecording) {
+          _rawHeartRateData.add(heartRate);
+        }
       }
     });
   }
@@ -344,7 +347,10 @@ class _PredictPageState extends State<PredictPage> {
               heartRate: _currentHeartRate,
               primaryColor: Colors.purple.shade400,
               secondaryColor: Colors.purple.shade600,
-              statusBadge: RecordingStatusBadge(isRecording: _isRecording),
+              statusBadge: RecordingStatusBadge(
+                isRecording: _isRecording,
+                dataPointCount: _rawHeartRateData.length,
+              ),
             ),
             const SizedBox(height: 20),
             HeartRateChart(

@@ -8,7 +8,7 @@ class PredictionService {
   PredictionService._internal();
 
   // API endpoint - change this when deploying to cloud
-  static const String _apiUrl = 'http://localhost:8000/predict';
+  static const String _apiUrl = 'http://139.59.251.61:3031/predict';
 
   /// Calculate features from heart rate data
   Map<String, double> calculateFeatures(List<double> heartRateData) {
@@ -59,17 +59,26 @@ class PredictionService {
       print('Sending request to: $_apiUrl');
       print('Request body: $requestBody');
 
-      // Make API call
+      // Make API call with better error handling
       final response = await http
           .post(
             Uri.parse(_apiUrl),
-            headers: {'Content-Type': 'application/json'},
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
             body: json.encode(requestBody),
           )
           .timeout(
-            const Duration(seconds: 10),
+            const Duration(seconds: 30),
             onTimeout: () {
-              throw Exception('Request timeout - API server not responding');
+              throw Exception(
+                'Request timeout (30s) - Server at $_apiUrl is not responding. '
+                'Please check:\n'
+                '1. Server is running\n'
+                '2. URL is correct\n'
+                '3. Network connection is stable',
+              );
             },
           );
 
@@ -89,6 +98,23 @@ class PredictionService {
           'API returned error: ${response.statusCode} - ${response.body}',
         );
       }
+    } on http.ClientException catch (e) {
+      print('ClientException: $e');
+      throw Exception(
+        'Network error: Cannot connect to prediction server at $_apiUrl\n\n'
+        'Possible causes:\n'
+        '• Server is not running or not accessible\n'
+        '• Incorrect URL (check IP address and port)\n'
+        '• Firewall blocking the connection\n'
+        '• Network connectivity issues\n\n'
+        'Details: ${e.message}',
+      );
+    } on FormatException catch (e) {
+      print('FormatException: $e');
+      throw Exception(
+        'Invalid response format from server. '
+        'Expected JSON but received something else.',
+      );
     } catch (e) {
       print('Prediction error: $e');
       rethrow;
