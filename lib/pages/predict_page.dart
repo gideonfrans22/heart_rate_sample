@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
-import 'package:intl/intl.dart';
 import '../services/mqtt_service.dart';
-import '../services/ml_service.dart';
+import '../services/prediction_service.dart';
+import '../services/firebase_service.dart';
+import '../widgets/widgets.dart';
 
 class PredictPage extends StatefulWidget {
   const PredictPage({super.key});
@@ -20,20 +21,32 @@ class _PredictPageState extends State<PredictPage> {
   bool _isRecording = false;
   DateTime? _recordingStartTime;
 
+  // MBTI selection
+  String _selectedMBTI = 'T';
+
+  // User selection for saving to Firebase
+  Map<String, dynamic>? _selectedUser;
+  List<Map<String, dynamic>> _users = [];
+  final TextEditingController _userSearchController = TextEditingController();
+  final TextEditingController _newUserNameController = TextEditingController();
+  final TextEditingController _newUserEmailController = TextEditingController();
+  final TextEditingController _newUserAgeController = TextEditingController();
+
   // Prediction results
   Map<String, dynamic>? _predictionResult;
   bool _isPredicting = false;
   bool _showResults = false;
+  String? _errorMessage;
+
+  // Prediction history
+  List<Map<String, dynamic>> _predictionHistory = [];
+  bool _isLoadingHistory = false;
 
   @override
   void initState() {
     super.initState();
     _setupHeartRateListener();
-    _initializeML();
-  }
-
-  Future<void> _initializeML() async {
-    await MLService.instance.initialize();
+    _loadPredictionHistory();
   }
 
   void _setupHeartRateListener() {
@@ -64,6 +77,128 @@ class _PredictPageState extends State<PredictPage> {
     });
   }
 
+  Future<void> _searchUsers(String query) async {
+    if (query.isEmpty) {
+      setState(() => _users = []);
+      return;
+    }
+
+    try {
+      final users = await FirebaseService.instance.searchUsers(query);
+      setState(() => _users = users);
+    } catch (e) {
+      print('Error searching users: $e');
+    }
+  }
+
+  Future<void> _createNewUser() async {
+    if (_newUserNameController.text.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Please enter a name')));
+      return;
+    }
+
+    try {
+      final userId = await FirebaseService.instance.createUser(
+        _newUserNameController.text,
+        email: _newUserEmailController.text.isEmpty
+            ? null
+            : _newUserEmailController.text,
+        age: _newUserAgeController.text.isEmpty
+            ? null
+            : int.tryParse(_newUserAgeController.text),
+      );
+
+      setState(() {
+        _selectedUser = {
+          'id': userId,
+          'name': _newUserNameController.text,
+          'email': _newUserEmailController.text,
+          'age': int.tryParse(_newUserAgeController.text),
+        };
+      });
+
+      _newUserNameController.clear();
+      _newUserEmailController.clear();
+      _newUserAgeController.clear();
+      Navigator.of(context).pop();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('User created successfully')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error creating user: $e')));
+    }
+  }
+
+  void _showCreateUserDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Create New User'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _newUserNameController,
+              decoration: const InputDecoration(
+                labelText: 'Name *',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _newUserEmailController,
+              decoration: const InputDecoration(
+                labelText: 'Email',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _newUserAgeController,
+              decoration: const InputDecoration(
+                labelText: 'Age',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.number,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: _createNewUser,
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _loadPredictionHistory() async {
+    setState(() => _isLoadingHistory = true);
+    try {
+      final history = await FirebaseService.instance.getPredictionHistory(
+        userId: _selectedUser?['id'],
+        limit: 10,
+      );
+      setState(() {
+        _predictionHistory = history;
+        _isLoadingHistory = false;
+      });
+    } catch (e) {
+      print('Error loading history: $e');
+      setState(() => _isLoadingHistory = false);
+    }
+  }
+
   void _toggleRecording() async {
     if (!_isRecording) {
       // Start recording
@@ -73,34 +208,81 @@ class _PredictPageState extends State<PredictPage> {
         _rawHeartRateData.clear();
         _showResults = false;
         _predictionResult = null;
+        _errorMessage = null;
       });
     } else {
       // Stop recording and predict
       setState(() {
         _isRecording = false;
         _isPredicting = true;
+        _errorMessage = null;
       });
 
       if (_rawHeartRateData.length >= 10) {
-        // Make prediction
-        final result = await MLService.instance.predictMBTI(_rawHeartRateData);
+        try {
+          // Make prediction
+          final result = await PredictionService.instance.predictEmotion(
+            heartRateData: _rawHeartRateData,
+            mbtiType: _selectedMBTI,
+          );
 
-        setState(() {
-          _predictionResult = result;
-          _isPredicting = false;
-          _showResults = true;
-        });
+          setState(() {
+            _predictionResult = result;
+            _isPredicting = false;
+            _showResults = true;
+          });
+
+          // Save to Firebase if user is selected
+          if (_selectedUser != null) {
+            await _savePredictionToFirebase(result);
+          }
+        } catch (e) {
+          setState(() {
+            _isPredicting = false;
+            _errorMessage = 'Prediction failed: ${e.toString()}';
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(_errorMessage!),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
       } else {
         setState(() {
           _isPredicting = false;
+          _errorMessage = 'Not enough data. Record for at least 10 seconds.';
         });
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Not enough data. Record for at least 10 seconds.'),
-          ),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(_errorMessage!)));
       }
+    }
+  }
+
+  Future<void> _savePredictionToFirebase(Map<String, dynamic> result) async {
+    try {
+      await FirebaseService.instance.savePrediction(
+        userId: _selectedUser!['id'],
+        predictionResult: result,
+        heartRateFeatures: result['features'] as Map<String, double>,
+        mbtiType: _selectedMBTI,
+        dataPoints: result['data_points'],
+      );
+
+      await _loadPredictionHistory();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Prediction saved to history!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      print('Error saving to Firebase: $e');
     }
   }
 
@@ -110,6 +292,7 @@ class _PredictPageState extends State<PredictPage> {
       _predictionResult = null;
       _showResults = false;
       _recordingStartTime = null;
+      _errorMessage = null;
     });
   }
 
@@ -117,7 +300,7 @@ class _PredictPageState extends State<PredictPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('MBTI Prediction'),
+        title: const Text('Emotion Prediction'),
         backgroundColor: Colors.purple.shade400,
         foregroundColor: Colors.white,
       ),
@@ -126,454 +309,85 @@ class _PredictPageState extends State<PredictPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildInstructionCard(),
+            const InstructionCard(
+              instructions: [
+                'Select your MBTI personality type (T or F)',
+                'Choose a user to save prediction results',
+                'Start recording your heart rate',
+                'The system will predict your emotional state',
+              ],
+            ),
             const SizedBox(height: 20),
-            _buildCurrentHeartRateCard(),
+            MBTISelector(
+              selectedMBTI: _selectedMBTI,
+              onChanged: (value) => setState(() => _selectedMBTI = value),
+            ),
             const SizedBox(height: 20),
-            _buildHeartRateChart(),
+            UserSelectionCard(
+              selectedUser: _selectedUser,
+              searchResults: _users,
+              searchController: _userSearchController,
+              onSearchChanged: _searchUsers,
+              onUserSelected: (user) {
+                setState(() {
+                  _selectedUser = user;
+                  _userSearchController.clear();
+                  _users.clear();
+                });
+                _loadPredictionHistory();
+              },
+              onClearSelection: () => setState(() => _selectedUser = null),
+              onCreateNew: _showCreateUserDialog,
+            ),
             const SizedBox(height: 20),
-            _buildRecordingControls(),
-            if (_showResults) ...[
+            HeartRateCard(
+              heartRate: _currentHeartRate,
+              primaryColor: Colors.purple.shade400,
+              secondaryColor: Colors.purple.shade600,
+              statusBadge: RecordingStatusBadge(isRecording: _isRecording),
+            ),
+            const SizedBox(height: 20),
+            HeartRateChart(
+              heartRateData: _heartRateData,
+              showTimeLabels: true,
+              primaryColor: Colors.purple.shade400,
+            ),
+            const SizedBox(height: 20),
+            RecordingControls(
+              isRecording: _isRecording,
+              onToggleRecording: _toggleRecording,
+              recordedDataCount: _rawHeartRateData.length,
+              recordingStartTime: _recordingStartTime,
+              isPredicting: _isPredicting,
+              showResults: _showResults,
+              onReset: _resetPrediction,
+              startLabel: 'Start Recording',
+              stopLabel: 'Predict Emotion',
+            ),
+            if (_isPredicting) ...[
               const SizedBox(height: 20),
-              _buildPredictionResults(),
+              const PredictingIndicator(),
             ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildInstructionCard() {
-    return Card(
-      elevation: 4,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.info_outline, color: Colors.purple.shade400),
-                const SizedBox(width: 8),
-                const Text(
-                  'How it works',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              '1. Watch a heart-moving video\n'
-              '2. Start recording your heart rate\n'
-              '3. Let your emotions flow naturally\n'
-              '4. Stop recording after at least 30 seconds\n'
-              '5. Get your MBTI prediction (T or F)',
-              style: TextStyle(fontSize: 14, height: 1.5),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCurrentHeartRateCard() {
-    return Card(
-      elevation: 4,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          gradient: LinearGradient(
-            colors: [Colors.purple.shade400, Colors.purple.shade600],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: Column(
-          children: [
-            const Icon(Icons.favorite, color: Colors.white, size: 40),
-            const SizedBox(height: 10),
-            const Text(
-              'Current Heart Rate',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w500,
+            if (_showResults && _predictionResult != null) ...[
+              const SizedBox(height: 20),
+              PredictionResultCard(
+                predictionResult: _predictionResult!,
+                selectedMBTI: _selectedMBTI,
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '${_currentHeartRate.toInt()} BPM',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 36,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    _isRecording ? Icons.fiber_manual_record : Icons.stop,
-                    color: Colors.white,
-                    size: 16,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    _isRecording
-                        ? 'Recording (${_rawHeartRateData.length} points)'
-                        : 'Stopped',
-                    style: const TextStyle(color: Colors.white, fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHeartRateChart() {
-    return Card(
-      elevation: 4,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Heart Rate Trend',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              height: 200,
-              child: _heartRateData.isEmpty
-                  ? const Center(
-                      child: Text(
-                        'No heart rate data available',
-                        style: TextStyle(color: Colors.grey, fontSize: 16),
-                      ),
-                    )
-                  : LineChart(
-                      LineChartData(
-                        gridData: FlGridData(
-                          show: true,
-                          drawVerticalLine: true,
-                          horizontalInterval: 20,
-                          verticalInterval: _heartRateData.length > 10
-                              ? _heartRateData.length / 5
-                              : 2,
-                          getDrawingHorizontalLine: (value) {
-                            return FlLine(
-                              color: Colors.grey.withOpacity(0.3),
-                              strokeWidth: 1,
-                            );
-                          },
-                          getDrawingVerticalLine: (value) {
-                            return FlLine(
-                              color: Colors.grey.withOpacity(0.3),
-                              strokeWidth: 1,
-                            );
-                          },
-                        ),
-                        titlesData: FlTitlesData(
-                          show: true,
-                          rightTitles: const AxisTitles(
-                            sideTitles: SideTitles(showTitles: false),
-                          ),
-                          topTitles: const AxisTitles(
-                            sideTitles: SideTitles(showTitles: false),
-                          ),
-                          bottomTitles: AxisTitles(
-                            sideTitles: SideTitles(
-                              showTitles: true,
-                              reservedSize: 30,
-                              interval: _heartRateData.length > 10
-                                  ? _heartRateData.length / 5
-                                  : 2,
-                              getTitlesWidget: (value, meta) {
-                                return const Text('');
-                              },
-                            ),
-                          ),
-                          leftTitles: AxisTitles(
-                            sideTitles: SideTitles(
-                              showTitles: true,
-                              interval: 20,
-                              getTitlesWidget: (value, meta) {
-                                return Text(
-                                  value.toInt().toString(),
-                                  style: const TextStyle(
-                                    color: Colors.grey,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                  ),
-                                );
-                              },
-                              reservedSize: 42,
-                            ),
-                          ),
-                        ),
-                        borderData: FlBorderData(
-                          show: true,
-                          border: Border.all(
-                            color: Colors.grey.withOpacity(0.3),
-                            width: 1,
-                          ),
-                        ),
-                        minX: 0,
-                        maxX: _heartRateData.isNotEmpty
-                            ? (_heartRateData.length - 1).toDouble()
-                            : 1,
-                        minY: 40,
-                        maxY: 200,
-                        lineBarsData: [
-                          LineChartBarData(
-                            spots: _heartRateData,
-                            gradient: LinearGradient(
-                              colors: [
-                                Colors.purple.shade400,
-                                Colors.purple.shade600,
-                              ],
-                            ),
-                            barWidth: 3,
-                            isStrokeCapRound: true,
-                            dotData: const FlDotData(show: false),
-                            belowBarData: BarAreaData(
-                              show: true,
-                              gradient: LinearGradient(
-                                colors: [
-                                  Colors.purple.shade400.withOpacity(0.3),
-                                  Colors.purple.shade600.withOpacity(0.1),
-                                ],
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRecordingControls() {
-    return Card(
-      elevation: 4,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            const Text(
-              'Recording Controls',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            if (_isRecording && _recordingStartTime != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 16),
-                child: Text(
-                  'Recording since: ${DateFormat('HH:mm:ss').format(_recordingStartTime!)}',
-                  style: TextStyle(
-                    color: Colors.purple.shade600,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: _isPredicting ? null : _toggleRecording,
-                  icon: Icon(_isRecording ? Icons.stop : Icons.play_arrow),
-                  label: Text(
-                    _isRecording ? 'Stop & Predict' : 'Start Recording',
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _isRecording ? Colors.red : Colors.green,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 12,
-                    ),
-                    minimumSize: const Size(180, 48),
-                  ),
-                ),
-                if (_showResults) ...[
-                  const SizedBox(width: 12),
-                  ElevatedButton.icon(
-                    onPressed: _resetPrediction,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Reset'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.grey,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 12,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            if (_isPredicting)
-              const Padding(
-                padding: EdgeInsets.only(top: 16),
-                child: CircularProgressIndicator(),
-              ),
-            if (_rawHeartRateData.isNotEmpty && !_showResults)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  'Recorded ${_rawHeartRateData.length} data points',
-                  style: TextStyle(color: Colors.grey.shade600),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPredictionResults() {
-    if (_predictionResult == null) return const SizedBox.shrink();
-
-    final prediction = _predictionResult!['prediction'] as String;
-    final confidence = _predictionResult!['confidence'] as double;
-    final details = _predictionResult!['details'] as Map<String, dynamic>;
-
-    return Card(
-      elevation: 4,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          gradient: LinearGradient(
-            colors: [
-              prediction == 'T' ? Colors.blue.shade400 : Colors.pink.shade400,
-              prediction == 'T' ? Colors.blue.shade600 : Colors.pink.shade600,
             ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: Column(
-          children: [
-            const Icon(Icons.psychology, color: Colors.white, size: 50),
-            const SizedBox(height: 16),
-            const Text(
-              'Your MBTI Prediction',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              prediction == 'T' ? 'Thinking (T)' : 'Feeling (F)',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 36,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Confidence: ${(confidence * 100).toStringAsFixed(1)}%',
-              style: const TextStyle(color: Colors.white, fontSize: 16),
-            ),
-            const SizedBox(height: 24),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                children: [
-                  _buildScoreBar(
-                    'Thinking',
-                    details['thinking_score'],
-                    Colors.blue,
-                  ),
-                  const SizedBox(height: 12),
-                  _buildScoreBar(
-                    'Feeling',
-                    details['feeling_score'],
-                    Colors.pink,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              prediction == 'T'
-                  ? 'You tend to make decisions based on logic and objective analysis.'
-                  : 'You tend to make decisions based on personal values and emotions.',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontStyle: FontStyle.italic,
-              ),
-              textAlign: TextAlign.center,
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 20),
+              ErrorMessageCard(message: _errorMessage!),
+            ],
+            const SizedBox(height: 20),
+            PredictionHistoryCard(
+              historyItems: _predictionHistory,
+              isLoading: _isLoadingHistory,
+              onRefresh: _loadPredictionHistory,
             ),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildScoreBar(String label, double score, Color color) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              label,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            Text(
-              '${(score * 100).toStringAsFixed(1)}%',
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: LinearProgressIndicator(
-            value: score,
-            backgroundColor: Colors.white.withOpacity(0.3),
-            valueColor: AlwaysStoppedAnimation<Color>(color),
-            minHeight: 8,
-          ),
-        ),
-      ],
     );
   }
 }
